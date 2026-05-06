@@ -1,19 +1,49 @@
+# ==========================================================
+# PHẦN VÁ LỖI (BẮT BUỘC PHẢI Ở TRÊN CÙNG - DÒNG 1)
+# ==========================================================
+import sys
+import torch
+import huggingface_hub
+
+# Cách vá lỗi triệt để cho 'cached_download'
+if not hasattr(huggingface_hub, 'cached_download'):
+    # Gán trực tiếp vào module để các lệnh 'from huggingface_hub import cached_download' không bị lỗi
+    setattr(huggingface_hub, 'cached_download', huggingface_hub.hf_hub_download)
+    sys.modules['huggingface_hub'].cached_download = huggingface_hub.hf_hub_download
+
+# Cách vá lỗi triệt để cho 'torch.xpu'
+if not hasattr(torch, 'xpu'):
+    class MockXPU:
+        def empty_cache(self): pass
+        def is_available(self): return False
+    torch.xpu = MockXPU()
+
+# ==========================================================
+# BẮT ĐẦU IMPORT CÁC THÀNH PHẦN CỦA PROJECT
+# ==========================================================
 from src.demo.download import download_all
+# Chạy download model sau khi đã vá lỗi xong
 download_all()
 
-from src.demo.demo import create_demo_move, create_demo_appearance, create_demo_drag, create_demo_face_drag, create_demo_paste
+from src.demo.demo import (
+    create_demo_move, 
+    create_demo_appearance, 
+    create_demo_drag, 
+    create_demo_face_drag, 
+    create_demo_paste
+)
 from src.demo.model import DragonModels
 
 import cv2
 import gradio as gr
 
-# main demo
+# Khởi tạo model
+# Lưu ý: "runwayml/stable-diffusion-v1-5" sẽ tự tải về nếu chưa có
 pretrained_model_path = "runwayml/stable-diffusion-v1-5"
 model = DragonModels(pretrained_model_path=pretrained_model_path)
 
 DESCRIPTION = '# 🐉🐉[DragonDiffusion V1.0](https://github.com/MC-E/DragonDiffusion)🐉🐉'
-
-DESCRIPTION += f'<p>Gradio demo for [DragonDiffusion](https://arxiv.org/abs/2307.02421) and [DiffEditor](https://arxiv.org/abs/2307.02421). If it is helpful, please help to recommend [[GitHub Repo]](https://github.com/MC-E/DragonDiffusion) to your friends 😊 </p>'
+DESCRIPTION += f'<p>Gradio demo for [DragonDiffusion](https://arxiv.org/abs/2307.02421). Nếu hữu ích hãy ủng hộ repo GitHub nhé! 😊 </p>'
 
 with gr.Blocks(css='style.css') as demo:
     gr.Markdown(DESCRIPTION)
@@ -29,5 +59,6 @@ with gr.Blocks(css='style.css') as demo:
         with gr.TabItem('Object Pasting'):
             create_demo_paste(model.run_paste)
 
-demo.queue(concurrency_count=3, max_size=20)
+# Khởi chạy Gradio
+demo.queue(max_size=20)
 demo.launch(server_name="0.0.0.0")
