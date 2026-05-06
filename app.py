@@ -45,4 +45,4 @@ with gr.Blocks(css='style.css') as demo:
 
 # Lưu ý: concurrency_count có thể gây cảnh báo ở bản Gradio mới, nhưng cứ để nguyên nếu bạn muốn sửa ít nhất
 demo.queue(concurrency_count=3, max_size=20)
-demo.launch(server_name="0.0.0.0")
+demo.launch(server_name="0.0.0.0", share=True)
