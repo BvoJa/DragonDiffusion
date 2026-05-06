@@ -1,5 +1,7 @@
 import huggingface_hub
 import torch
+import matplotlib
+matplotlib.use('Agg') # Ép Matplotlib dùng backend Agg (không cần màn hình)
 
 # 1. PHẢI VÁ LỖI Ở ĐÂY (TRƯỚC KHI IMPORT CÁC THỨ KHÁC)
 if not hasattr(huggingface_hub, 'cached_download'):
