@@ -7,6 +7,15 @@ from src.demo.model import DragonModels
 import cv2
 import gradio as gr
 
+if not hasattr(huggingface_hub, 'cached_download'):
+    huggingface_hub.cached_download = huggingface_hub.hf_hub_download
+
+# Giải quyết lỗi: AttributeError: module 'torch' has no attribute 'xpu' (nếu có)
+if not hasattr(torch, 'xpu'):
+    class MockXPU:
+        def empty_cache(self): pass
+    torch.xpu = MockXPU()
+
 # main demo
 pretrained_model_path = "runwayml/stable-diffusion-v1-5"
 model = DragonModels(pretrained_model_path=pretrained_model_path)
