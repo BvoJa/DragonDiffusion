@@ -26,11 +26,11 @@ class DragonPipeline:
         onestep_pipe.estimator = MyUNet2DConditionModel.from_pretrained(sd_id, subfolder="unet",vae=None, text_encoder=None, tokenizer=None,
                                 scheduler=DDIMScheduler.from_pretrained(sd_id, subfolder="scheduler"),
                                 safety_checker=None, feature_extractor=None,).to('cuda', dtype=precision)
-        onestep_pipe.estimator.enable_xformers_memory_efficient_attention()
+        # onestep_pipe.estimator.enable_xformers_memory_efficient_attention()
         gc.collect()
         onestep_pipe = onestep_pipe.to("cuda")
         onestep_pipe.enable_attention_slicing()
-        onestep_pipe.enable_xformers_memory_efficient_attention()
+        # onestep_pipe.enable_xformers_memory_efficient_attention()
         self.pipe = onestep_pipe
         self.NUM_DDIM_STEPS = NUM_DDIM_STEPS
         self.precision = precision

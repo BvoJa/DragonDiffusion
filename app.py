@@ -1,3 +1,7 @@
+import os
+os.environ["XFORMERS_FORCE_DISABLE_TRITON"] = "1"
+os.environ["XFORMERS_DISABLED"] = "1"
+
 import huggingface_hub
 import torch
 import matplotlib
