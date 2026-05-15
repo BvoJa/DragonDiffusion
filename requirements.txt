@@ -7,3 +7,5 @@ einops
 pytorch_lightning
 omegaconf
 gradio==3.50.2
+matplotlib
+scikit-learn
