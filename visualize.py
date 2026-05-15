@@ -9,11 +9,28 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-from diffusers import AutoencoderKL
 from PIL import Image
 
 
 LATENT_SCALE = 0.18215
+
+
+def patch_huggingface_hub_compatibility():
+    import huggingface_hub
+
+    if not hasattr(huggingface_hub, "cached_download") and hasattr(huggingface_hub, "hf_hub_download"):
+        huggingface_hub.cached_download = huggingface_hub.hf_hub_download
+
+    if not hasattr(huggingface_hub, "split_torch_state_dict_into_shards"):
+        def split_torch_state_dict_into_shards(state_dict, *args, **kwargs):
+            return {"": state_dict}
+
+        huggingface_hub.split_torch_state_dict_into_shards = split_torch_state_dict_into_shards
+
+
+patch_huggingface_hub_compatibility()
+
+from diffusers import AutoencoderKL
 
 
 def parse_args():
