@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use("Agg")
+
 import cv2
 import matplotlib.pyplot as plt
 import os
