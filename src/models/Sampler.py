@@ -392,12 +392,12 @@ class Sampler(StableDiffusionPipeline):
         for f_id in range(len(up_ft_cur)):
             up_ft_cur[f_id] = F.interpolate(up_ft_cur[f_id], (up_ft_cur[-1].shape[-2]*up_scale, up_ft_cur[-1].shape[-1]*up_scale))
         
-        # for base content
+        # for base content (whole image - all ones mask)
         loss_con = 0
+        mask_all = torch.ones_like(mask_base_cur, dtype=torch.bool)
         for f_id in range(len(up_ft_tar_base)):
-            mask_cur = (1-mask_base_cur.float())>0.5
-            up_ft_cur_vec = up_ft_cur[f_id][mask_cur.repeat(1,up_ft_cur[f_id].shape[1],1,1)].view(up_ft_cur[f_id].shape[1], -1).permute(1,0)
-            up_ft_tar_vec = up_ft_tar_base[f_id][mask_cur.repeat(1,up_ft_tar_base[f_id].shape[1],1,1)].view(up_ft_tar_base[f_id].shape[1], -1).permute(1,0)
+            up_ft_cur_vec = up_ft_cur[f_id][mask_all.repeat(1,up_ft_cur[f_id].shape[1],1,1)].view(up_ft_cur[f_id].shape[1], -1).permute(1,0)
+            up_ft_tar_vec = up_ft_tar_base[f_id][mask_all.repeat(1,up_ft_tar_base[f_id].shape[1],1,1)].view(up_ft_tar_base[f_id].shape[1], -1).permute(1,0)
             sim = (cos(up_ft_cur_vec, up_ft_tar_vec)+1.)/2.
             loss_con = loss_con + w_content/(1+4*sim.mean())
         # for replace content
@@ -460,19 +460,18 @@ class Sampler(StableDiffusionPipeline):
                     encoder_hidden_states=text_embeddings)['up_ft']
         for f_id in range(len(up_ft_cur)):
             up_ft_cur[f_id] = F.interpolate(up_ft_cur[f_id], (up_ft_cur[-1].shape[-2]*up_scale, up_ft_cur[-1].shape[-1]*up_scale))
-        # for base content
+        # for base content (whole image - all ones mask)
         loss_con = 0
+        mask_all = torch.ones_like(mask_base_cur, dtype=torch.bool)
         for f_id in range(len(up_ft_tar_base)):
-            mask_cur = (1-mask_base_cur.float())>0.5
-            up_ft_cur_vec = up_ft_cur[f_id][mask_cur.repeat(1,up_ft_cur[f_id].shape[1],1,1)].view(up_ft_cur[f_id].shape[1], -1).permute(1,0)
-            up_ft_tar_vec = up_ft_tar_base[f_id][mask_cur.repeat(1,up_ft_tar_base[f_id].shape[1],1,1)].view(up_ft_tar_base[f_id].shape[1], -1).permute(1,0)
+            up_ft_cur_vec = up_ft_cur[f_id][mask_all.repeat(1,up_ft_cur[f_id].shape[1],1,1)].view(up_ft_cur[f_id].shape[1], -1).permute(1,0)
+            up_ft_tar_vec = up_ft_tar_base[f_id][mask_all.repeat(1,up_ft_tar_base[f_id].shape[1],1,1)].view(up_ft_tar_base[f_id].shape[1], -1).permute(1,0)
             sim = (cos(up_ft_cur_vec, up_ft_tar_vec)+1.)/2.
             loss_con = loss_con + w_content/(1+4*sim.mean())
         # for replace content
         loss_edit = 0
         for f_id in range(len(up_ft_tar_replace)):
             mask_cur = mask_base_cur
-
             up_ft_cur_vec = up_ft_cur[f_id][mask_cur.repeat(1,up_ft_cur[f_id].shape[1],1,1)].view(up_ft_cur[f_id].shape[1], -1).permute(1,0)
             up_ft_tar_vec = up_ft_tar_replace[f_id][mask_replace_cur.repeat(1,up_ft_tar_replace[f_id].shape[1],1,1)].view(up_ft_tar_replace[f_id].shape[1], -1).permute(1,0)
             sim_all=((cos(up_ft_cur_vec, up_ft_tar_vec)+1.)/2.)
