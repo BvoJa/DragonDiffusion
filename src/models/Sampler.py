@@ -460,6 +460,7 @@ class Sampler(StableDiffusionPipeline):
                     encoder_hidden_states=text_embeddings)['up_ft']
         for f_id in range(len(up_ft_cur)):
             up_ft_cur[f_id] = F.interpolate(up_ft_cur[f_id], (up_ft_cur[-1].shape[-2]*up_scale, up_ft_cur[-1].shape[-1]*up_scale))
+            
         # for base content (whole image - all ones mask)
         loss_con = 0
         mask_all = torch.ones_like(mask_base_cur, dtype=torch.bool)
@@ -468,6 +469,7 @@ class Sampler(StableDiffusionPipeline):
             up_ft_tar_vec = up_ft_tar_base[f_id][mask_all.repeat(1,up_ft_tar_base[f_id].shape[1],1,1)].view(up_ft_tar_base[f_id].shape[1], -1).permute(1,0)
             sim = (cos(up_ft_cur_vec, up_ft_tar_vec)+1.)/2.
             loss_con = loss_con + w_content/(1+4*sim.mean())
+
         # for replace content
         loss_edit = 0
         for f_id in range(len(up_ft_tar_replace)):
@@ -481,7 +483,9 @@ class Sampler(StableDiffusionPipeline):
         cond_grad_edit = torch.autograd.grad(loss_edit*energy_scale, latent)[0]
         mask = F.interpolate(mask_base_cur.float(), (cond_grad_edit[-1].shape[-2], cond_grad_edit[-1].shape[-1]))
         mask = (mask>0).to(dtype=latent.dtype)
-        guidance = cond_grad_con.detach()*(1-mask)*4e-2 + cond_grad_edit.detach()*mask*4e-2
+        mask_all = F.interpolate(mask_all.float(), (cond_grad_edit[-1].shape[-2], cond_grad_edit[-1].shape[-1]))
+        mask_all = (mask_all>0).to(dtype=latent.dtype)
+        guidance = cond_grad_con.detach()*mask_all*4e-2 + cond_grad_edit.detach()*mask*4e-2
         self.estimator.zero_grad()
 
         return guidance
