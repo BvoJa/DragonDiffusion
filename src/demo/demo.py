@@ -601,6 +601,13 @@ def create_demo_paste(runner):
                                         step=0.1,
                                         value=6,
                                         interactive=True)
+                            w_grad = gr.Slider(
+                                        label="Weight of gradient loss",
+                                        minimum=0,
+                                        maximum=20,
+                                        step=0.1,
+                                        value=0,
+                                        interactive=True)
                             SDE_strength = gr.Slider(
                                         label="Flexibility strength",
                                         minimum=0,
@@ -655,5 +662,5 @@ def create_demo_paste(runner):
             )
             
         clear_button.click(fn=fun_clear, inputs=[original_image, global_points, global_point_label, img_replace, mask_base, img_base], outputs=[original_image, global_points, global_point_label, img_replace, mask_base, img_base])
-        run_button.click(fn=runner, inputs=[img_base, mask_base, original_image, prompt, prompt_replace, w_edit, w_content, seed, guidance_scale, energy_scale, dx, dy, resize_scale, max_resolution, SDE_strength, ip_scale], outputs=[output])
+        run_button.click(fn=runner, inputs=[img_base, mask_base, original_image, prompt, prompt_replace, w_edit, w_content, w_grad, seed, guidance_scale, energy_scale, dx, dy, resize_scale, max_resolution, SDE_strength, ip_scale], outputs=[output])
     return demo
