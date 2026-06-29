@@ -496,9 +496,14 @@ class Sampler(StableDiffusionPipeline):
             pred_grad = laplacian_filter_tensor_latent(latent, self.device)
             pred_grad_stack = torch.stack(pred_grad, dim=1).squeeze(0)   # (4, H, W)
             gt_grad_stack = torch.stack(gt_gradient, dim=1).squeeze(0)   # (4, H, W)
+            # Downsample masks to match latent gradient spatial dimensions
+            mask_base_grad = F.interpolate(mask_base_cur.float(), (pred_grad_stack.shape[-2], pred_grad_stack.shape[-1]))
+            mask_base_grad = (mask_base_grad[0, 0] > 0)  # boolean mask for indexing
+            mask_replace_grad = F.interpolate(mask_replace_cur.float(), (gt_grad_stack.shape[-2], gt_grad_stack.shape[-1]))
+            mask_replace_grad = (mask_replace_grad[0, 0] > 0)  # boolean mask for indexing
             # same pattern as loss_edit: current latent at source v.s. reference at destination
-            grad_cur_vec = pred_grad_stack[:, mask_base_cur[0, 0]].permute(1, 0)   # (N_src, 4)
-            grad_ref_vec = gt_grad_stack[:, mask_replace_cur[0, 0]].permute(1, 0)  # (N_dst, 4)
+            grad_cur_vec = pred_grad_stack[:, mask_base_grad].permute(1, 0)   # (N_src, 4)
+            grad_ref_vec = gt_grad_stack[:, mask_replace_grad].permute(1, 0)  # (N_dst, 4)
             print(grad_cur_vec.shape, grad_ref_vec.shape)
             sim = (cos(grad_cur_vec, grad_ref_vec) + 1.) / 2.
             loss_grad = w_grad / (1 + 4 * sim.mean())
