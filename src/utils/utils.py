@@ -18,7 +18,7 @@ def laplacian_filter_tensor_latent(tensor, gpu_id):
     """
     laplacian_filter = np.array([[0, -1, 0],[-1, 4, -1],[0, -1, 0]])
     laplacian_conv = nn.Conv2d(1, 1, kernel_size=3, stride=1, padding=1, bias=False)
-    laplacian_conv.weight = nn.Parameter(torch.from_numpy(laplacian_filter).float().unsqueeze(0).unsqueeze(0).to(gpu_id))
+    laplacian_conv.weight = nn.Parameter(torch.from_numpy(laplacian_filter).to(dtype=tensor.dtype, device=gpu_id).unsqueeze(0).unsqueeze(0))
     for param in laplacian_conv.parameters():
         param.requires_grad = False
     
