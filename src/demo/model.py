@@ -332,7 +332,7 @@ class DragonModels():
 
         return [img_rec]
 
-    def run_paste(self, img_base, mask_base, img_replace, prompt, prompt_replace, w_edit, w_content, seed, guidance_scale, energy_scale, dx, dy, resize_scale, max_resolution, SDE_strength, ip_scale=None):
+    def run_paste(self, img_base, mask_base, img_replace, prompt, prompt_replace, w_edit, w_content, w_grad, seed, guidance_scale, energy_scale, dx, dy, resize_scale, max_resolution, SDE_strength, ip_scale=None):
         seed_everything(seed)
         energy_scale = energy_scale*1e3
         img_base, input_scale = resize_numpy_image(img_base, max_resolution*max_resolution)
@@ -389,7 +389,8 @@ class DragonModels():
             w_edit = w_edit, 
             w_content = w_content, 
             precision = self.precision,
-            resize_scale=resize_scale
+            resize_scale=resize_scale,
+            w_grad=w_grad
         )
         mask_tmp = (F.interpolate(edit_kwargs['mask_base_cur'].float(), (latent_in.shape[-2], latent_in.shape[-1]))>0).float()
         latent_tmp = torch.roll(ddim_latents[-1][1:].squeeze(2), (int(dy/(w/latent_in.shape[-2])), int(dx/(w/latent_in.shape[-2]))), (-2,-1))
