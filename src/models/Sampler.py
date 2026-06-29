@@ -8,6 +8,7 @@ from tqdm import tqdm
 import torch.nn as nn
 import copy
 import numpy as np
+from src.utils.utils import laplacian_filter_tensor_latent
 
 class Sampler(StableDiffusionPipeline):
 
@@ -433,8 +434,18 @@ class Sampler(StableDiffusionPipeline):
         dict_mask,
         w_edit,
         w_content,
+        w_grad=0,
     ):
         cos = nn.CosineSimilarity(dim=1)
+
+        # Precompute ground truth gradient from the reference latent (with object placed at destination)
+        if w_grad > 0:
+            with torch.no_grad():
+                ref_latent = latent_noise_ref.squeeze(2)[1::2]  # replace reference with object at correct position
+                gt_gradient = laplacian_filter_tensor_latent(ref_latent, self.device)
+        else:
+            gt_gradient = None
+
         with torch.no_grad():
             up_ft_tar_base = self.estimator(
                         sample=latent_noise_ref.squeeze(2)[::2],
@@ -479,13 +490,34 @@ class Sampler(StableDiffusionPipeline):
             sim_all=((cos(up_ft_cur_vec, up_ft_tar_vec)+1.)/2.)
             loss_edit =  loss_edit + w_edit/(1+4*sim_all.mean())
 
+        # gradient guidance: match Laplacian gradients (same pattern as loss_edit)
+        loss_grad = 0
+        if w_grad > 0:
+            pred_grad = laplacian_filter_tensor_latent(latent, self.device)
+            pred_grad_stack = torch.stack(pred_grad, dim=1).squeeze(0)   # (4, H, W)
+            gt_grad_stack = torch.stack(gt_gradient, dim=1).squeeze(0)   # (4, H, W)
+            # same pattern as loss_edit: current latent at source v.s. reference at destination
+            grad_cur_vec = pred_grad_stack[:, mask_base_cur[0, 0]].permute(1, 0)   # (N_src, 4)
+            grad_ref_vec = gt_grad_stack[:, mask_replace_cur[0, 0]].permute(1, 0)  # (N_dst, 4)
+            print(grad_cur_vec.shape, grad_ref_vec.shape)
+            sim = (cos(grad_cur_vec, grad_ref_vec) + 1.) / 2.
+            loss_grad = w_grad / (1 + 4 * sim.mean())
+
         cond_grad_con = torch.autograd.grad(loss_con*energy_scale, latent, retain_graph=True)[0]
-        cond_grad_edit = torch.autograd.grad(loss_edit*energy_scale, latent)[0]
+        cond_grad_edit = torch.autograd.grad(loss_edit*energy_scale, latent, retain_graph=True)[0]
+        if w_grad > 0:
+            cond_grad_grad = torch.autograd.grad(loss_grad*energy_scale, latent)[0]
+        else:
+            cond_grad_grad = 0
         mask = F.interpolate(mask_base_cur.float(), (cond_grad_edit[-1].shape[-2], cond_grad_edit[-1].shape[-1]))
         mask = (mask>0).to(dtype=latent.dtype)
         mask_all = F.interpolate(mask_all.float(), (cond_grad_edit[-1].shape[-2], cond_grad_edit[-1].shape[-1]))
         mask_all = (mask_all>0).to(dtype=latent.dtype)
         guidance = cond_grad_con.detach()*mask_all*4e-2 + cond_grad_edit.detach()*mask*4e-2
+        if w_grad > 0:
+            # mask_grad = F.interpolate(mask_replace_cur.float(), (cond_grad_edit[-1].shape[-2], cond_grad_edit[-1].shape[-1]))
+            # mask_grad = (mask_grad>0).to(dtype=latent.dtype)
+            guidance = guidance + cond_grad_grad.detach()*mask*4e-2
         self.estimator.zero_grad()
 
         return guidance
