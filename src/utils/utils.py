@@ -2,7 +2,32 @@ import numpy as np
 import cv2
 from basicsr.utils import img2tensor
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
+
+def laplacian_filter_tensor_latent(tensor, gpu_id):
+    """
+    Apply Laplacian filter per-channel on a tensor with arbitrary channels (e.g., 4-channel latents).
+    
+    Args:
+        tensor: (B, C, H, W) tensor
+        gpu_id: device
+        
+    Returns:
+        list of C tensors, each of shape (B, H, W) - gradient per channel
+    """
+    laplacian_filter = np.array([[0, -1, 0],[-1, 4, -1],[0, -1, 0]])
+    laplacian_conv = nn.Conv2d(1, 1, kernel_size=3, stride=1, padding=1, bias=False)
+    laplacian_conv.weight = nn.Parameter(torch.from_numpy(laplacian_filter).float().unsqueeze(0).unsqueeze(0).to(gpu_id))
+    for param in laplacian_conv.parameters():
+        param.requires_grad = False
+    
+    gradients = []
+    for c in range(tensor.shape[1]):
+        channel_tensor = tensor[:, c:c+1, :, :]
+        grad = laplacian_conv(channel_tensor).squeeze(1)
+        gradients.append(grad)
+    return gradients
 
 def resize_numpy_image(image, max_resolution=768 * 768, resize_short_edge=None):
     h, w = image.shape[:2]
