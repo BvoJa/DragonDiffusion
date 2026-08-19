@@ -528,7 +528,7 @@ class Sampler(StableDiffusionPipeline):
             
             # Predict noise using UNet WITHOUT gradients (to avoid attention batch size issues)
             with torch.no_grad():
-                latent_in = latent_for_grad.unsqueeze(2)
+                latent_in = latent.unsqueeze(2)
                 noise_pred = self.unet(latent_in, t, encoder_hidden_states=text_embeddings, mask=dict_mask, save_kv=False, mode='paste')["sample"].squeeze(2)
             
             # Compute predicted z_0 using DDIM formula (gradients flow through latent_for_grad only)
