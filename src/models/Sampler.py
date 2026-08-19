@@ -512,25 +512,31 @@ class Sampler(StableDiffusionPipeline):
         # Gradient loss using Laplacian filter on foreground
         loss_grad = 0
         if w_grad > 0 and z_0_ref is not None:
-            # Predict noise using UNet
-            with torch.enable_grad():
-                latent_in = latent.unsqueeze(2)
-                noise_pred = self.unet(latent_in, t, encoder_hidden_states=text_embeddings, mask=dict_mask, save_kv=False, mode='paste')["sample"].squeeze(2)
+            # Compute reference gradients with no_grad
+            with torch.no_grad():
+                # Interpolate z_0_ref to match latent size if different
+                if z_0_ref.shape != latent.shape:
+                    z_0_ref_resized = F.interpolate(z_0_ref, size=(latent.shape[-2], latent.shape[-1]), mode='bilinear', align_corners=False)
+                else:
+                    z_0_ref_resized = z_0_ref
+                
+                # Apply Laplacian filter to reference z_0
+                grad_ref = laplacian_filter_tensor_latent(z_0_ref_resized, self.device)
+            
+            # Detach latent and re-enable gradients for gradient computation
+            latent_for_grad = latent.detach().requires_grad_(True)
+            
+            # Predict noise using UNet with gradients
+            latent_in = latent_for_grad.unsqueeze(2)
+            noise_pred = self.unet(latent_in, t, encoder_hidden_states=text_embeddings, mask=dict_mask, save_kv=False, mode='paste')["sample"].squeeze(2)
             
             # Compute predicted z_0 using DDIM formula
             alpha_t = self.scheduler.alphas_cumprod[t]
             beta_t = 1 - alpha_t
-            z_0_pred = (latent - torch.sqrt(beta_t) * noise_pred) / torch.sqrt(alpha_t)
+            z_0_pred = (latent_for_grad - torch.sqrt(beta_t) * noise_pred) / torch.sqrt(alpha_t)
             
-            # Interpolate z_0_ref to match z_0_pred size if different
-            if z_0_ref.shape != z_0_pred.shape:
-                z_0_ref_resized = F.interpolate(z_0_ref, size=(z_0_pred.shape[-2], z_0_pred.shape[-1]), mode='bilinear', align_corners=False)
-            else:
-                z_0_ref_resized = z_0_ref
-            
-            # Apply Laplacian filter to both predicted and reference z_0
+            # Apply Laplacian filter to predicted z_0
             grad_pred = laplacian_filter_tensor_latent(z_0_pred, self.device)
-            grad_ref = laplacian_filter_tensor_latent(z_0_ref_resized, self.device)
             
             # Compute loss on foreground only
             mask_latent = F.interpolate(mask_base_cur.float(), size=(z_0_pred.shape[-2], z_0_pred.shape[-1]), mode='nearest')
@@ -540,7 +546,7 @@ class Sampler(StableDiffusionPipeline):
                 grad_r_masked = grad_r * mask_latent.squeeze(1)
                 loss_grad = loss_grad + F.mse_loss(grad_p_masked, grad_r_masked)
             
-            cond_grad_grad = torch.autograd.grad(loss_grad*w_grad*energy_scale, latent, retain_graph=True)[0]
+            cond_grad_grad = torch.autograd.grad(loss_grad*w_grad*energy_scale, latent_for_grad)[0]
         else:
             cond_grad_grad = torch.zeros_like(cond_grad_edit)
         
