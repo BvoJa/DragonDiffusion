@@ -526,14 +526,15 @@ class Sampler(StableDiffusionPipeline):
             # Detach latent and re-enable gradients for gradient computation
             latent_for_grad = latent.detach().requires_grad_(True)
             
-            # Predict noise using UNet with gradients
-            latent_in = latent_for_grad.unsqueeze(2)
-            noise_pred = self.unet(latent_in, t, encoder_hidden_states=text_embeddings, mask=dict_mask, save_kv=False, mode='paste')["sample"].squeeze(2)
+            # Predict noise using UNet WITHOUT gradients (to avoid attention batch size issues)
+            with torch.no_grad():
+                latent_in = latent_for_grad.unsqueeze(2)
+                noise_pred = self.unet(latent_in, t, encoder_hidden_states=text_embeddings, mask=dict_mask, save_kv=False, mode='paste')["sample"].squeeze(2)
             
-            # Compute predicted z_0 using DDIM formula
+            # Compute predicted z_0 using DDIM formula (gradients flow through latent_for_grad only)
             alpha_t = self.scheduler.alphas_cumprod[t]
             beta_t = 1 - alpha_t
-            z_0_pred = (latent_for_grad - torch.sqrt(beta_t) * noise_pred) / torch.sqrt(alpha_t)
+            z_0_pred = (latent_for_grad - torch.sqrt(beta_t) * noise_pred.detach()) / torch.sqrt(alpha_t)
             
             # Apply Laplacian filter to predicted z_0
             grad_pred = laplacian_filter_tensor_latent(z_0_pred, self.device)
