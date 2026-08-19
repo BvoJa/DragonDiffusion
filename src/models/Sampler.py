@@ -84,7 +84,8 @@ class Sampler(StableDiffusionPipeline):
                     elif mode == 'appearance':
                         guidance = self.guidance_appearance(latent=latent, latent_noise_ref=latent_noise_ref[-(i+1)], t=t, text_embeddings=text_embeddings_org, energy_scale=energy_scale, **edit_kwargs)
                     elif mode == 'paste':
-                        guidance = self.guidance_paste(latent=latent, latent_noise_ref=latent_noise_ref[-(i+1)], t=t, text_embeddings=text_embeddings_org, energy_scale=energy_scale, **edit_kwargs)
+                        z_0_ref = latent_noise_ref[0][0:1].squeeze(2) if 'w_grad' in edit_kwargs and edit_kwargs['w_grad'] > 0 else None
+                        guidance = self.guidance_paste(latent=latent, latent_noise_ref=latent_noise_ref[-(i+1)], t=t, text_embeddings=text_embeddings_org, energy_scale=energy_scale, z_0_ref=z_0_ref, **edit_kwargs)
 
                     noise_pred = noise_pred + guidance
                 else:
@@ -436,6 +437,7 @@ class Sampler(StableDiffusionPipeline):
         w_content,
         w_grad=0,
         w_style=0,
+        z_0_ref=None,
     ):
         cos = nn.CosineSimilarity(dim=1)
         with torch.no_grad():
@@ -503,13 +505,48 @@ class Sampler(StableDiffusionPipeline):
                 # MSE loss between Gram matrices
                 loss_style = loss_style + F.mse_loss(gram_cur, gram_tar)
             
-            cond_grad_style = torch.autograd.grad(loss_style*w_style*energy_scale, latent)[0]
+            cond_grad_style = torch.autograd.grad(loss_style*w_style*energy_scale, latent, retain_graph=True)[0]
         else:
             cond_grad_style = torch.zeros_like(cond_grad_edit)
         
+        # Gradient loss using Laplacian filter on foreground
+        loss_grad = 0
+        if w_grad > 0 and z_0_ref is not None:
+            # Predict noise using UNet
+            with torch.enable_grad():
+                latent_in = latent.unsqueeze(2)
+                noise_pred = self.unet(latent_in, t, encoder_hidden_states=text_embeddings.unsqueeze(0), mask=dict_mask, save_kv=False, mode='paste')["sample"].squeeze(2)
+            
+            # Compute predicted z_0 using DDIM formula
+            alpha_t = self.scheduler.alphas_cumprod[t]
+            beta_t = 1 - alpha_t
+            z_0_pred = (latent - torch.sqrt(beta_t) * noise_pred) / torch.sqrt(alpha_t)
+            
+            # Interpolate z_0_ref to match z_0_pred size if different
+            if z_0_ref.shape != z_0_pred.shape:
+                z_0_ref_resized = F.interpolate(z_0_ref, size=(z_0_pred.shape[-2], z_0_pred.shape[-1]), mode='bilinear', align_corners=False)
+            else:
+                z_0_ref_resized = z_0_ref
+            
+            # Apply Laplacian filter to both predicted and reference z_0
+            grad_pred = laplacian_filter_tensor_latent(z_0_pred, self.device)
+            grad_ref = laplacian_filter_tensor_latent(z_0_ref_resized, self.device)
+            
+            # Compute loss on foreground only
+            mask_latent = F.interpolate(mask_base_cur.float(), size=(z_0_pred.shape[-2], z_0_pred.shape[-1]), mode='nearest')
+            for grad_p, grad_r in zip(grad_pred, grad_ref):
+                # Apply mask to focus on foreground
+                grad_p_masked = grad_p * mask_latent.squeeze(1)
+                grad_r_masked = grad_r * mask_latent.squeeze(1)
+                loss_grad = loss_grad + F.mse_loss(grad_p_masked, grad_r_masked)
+            
+            cond_grad_grad = torch.autograd.grad(loss_grad*w_grad*energy_scale, latent, retain_graph=True)[0]
+        else:
+            cond_grad_grad = torch.zeros_like(cond_grad_edit)
+        
         mask = F.interpolate(mask_base_cur.float(), (cond_grad_edit[-1].shape[-2], cond_grad_edit[-1].shape[-1]))
         mask = (mask>0).to(dtype=latent.dtype)
-        guidance = cond_grad_con.detach()*(1-mask)*4e-2 + cond_grad_edit.detach()*mask*4e-2 + cond_grad_style.detach()*mask*4e-2
+        guidance = cond_grad_con.detach()*(1-mask)*4e-2 + cond_grad_edit.detach()*mask*4e-2 + cond_grad_style.detach()*mask*4e-2 + cond_grad_grad.detach()*mask*4e-2
         self.estimator.zero_grad()
 
         return guidance
