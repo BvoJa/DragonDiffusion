@@ -531,26 +531,27 @@ class Sampler(StableDiffusionPipeline):
             alpha_prod_t = self.scheduler.alphas_cumprod[t]
             beta_prod_t = 1 - alpha_prod_t
             
-            # Safety check: ensure alpha_prod_t is not too small to avoid division issues
-            alpha_prod_t = torch.clamp(alpha_prod_t, min=1e-8)
-            
             pred_original_sample = (latent_for_grad - beta_prod_t ** (0.5) * noise_pred.detach()) / alpha_prod_t ** (0.5)
-            
-            # Clamp to reasonable range to avoid extreme values that cause NaN/Inf
-            pred_original_sample = torch.clamp(pred_original_sample, min=-10, max=10)
             
             # Apply Laplacian filter to predicted z_0
             grad_pred = laplacian_filter_tensor_latent(pred_original_sample, self.device)
+            pred_grad_stack = torch.stack(grad_pred, dim=1).squeeze(0)  # (4, H, W)
+            grad_ref_stack = torch.stack(grad_ref, dim=1).squeeze(0)  # (4, H, W)
             
-            # Compute loss on foreground only
-            mask_latent = F.interpolate(mask_base_cur.float(), size=(pred_original_sample.shape[-2], pred_original_sample.shape[-1]), mode='nearest')
-            for grad_p, grad_r in zip(grad_pred, grad_ref):
-                # Apply mask to focus on foreground
-                grad_p_masked = grad_p * mask_latent.squeeze(1)
-                grad_r_masked = grad_r * mask_latent.squeeze(1)
-                loss_grad = loss_grad + F.mse_loss(grad_p_masked, grad_r_masked)
+            # Downsample masks to match latent gradient spatial dimensions
+            mask_base_grad = F.interpolate(mask_base_cur.float(), (pred_grad_stack.shape[-2], pred_grad_stack.shape[-1]))
+            mask_base_grad = (mask_base_grad[0, 0] > 0)  # boolean mask for indexing
+            mask_replace_grad = F.interpolate(mask_replace_cur.float(), (grad_ref_stack.shape[-2], grad_ref_stack.shape[-1]))
+            mask_replace_grad = (mask_replace_grad[0, 0] > 0)  # boolean mask for indexing
             
-            cond_grad_grad = torch.autograd.grad(loss_grad*w_grad*energy_scale, latent_for_grad)[0]
+            # same pattern as loss_edit: current latent at source v.s. reference at destination
+            grad_cur_vec = pred_grad_stack[:, mask_base_grad].permute(1, 0)  # (N_src, 4)
+            grad_ref_vec = grad_ref_stack[:, mask_replace_grad].permute(1, 0)  # (N_dst, 4)
+            
+            sim = (cos(grad_cur_vec, grad_ref_vec) + 1.) / 2.
+            loss_grad = w_grad / (1 + 4 * sim.mean())
+            
+            cond_grad_grad = torch.autograd.grad(loss_grad*energy_scale, latent_for_grad)[0]
         else:
             cond_grad_grad = torch.zeros_like(cond_grad_edit)
         
