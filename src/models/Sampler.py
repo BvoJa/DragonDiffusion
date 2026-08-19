@@ -515,7 +515,7 @@ class Sampler(StableDiffusionPipeline):
             # Predict noise using UNet
             with torch.enable_grad():
                 latent_in = latent.unsqueeze(2)
-                noise_pred = self.unet(latent_in, t, encoder_hidden_states=text_embeddings.unsqueeze(0), mask=dict_mask, save_kv=False, mode='paste')["sample"].squeeze(2)
+                noise_pred = self.unet(latent_in, t, encoder_hidden_states=text_embeddings, mask=dict_mask, save_kv=False, mode='paste')["sample"].squeeze(2)
             
             # Compute predicted z_0 using DDIM formula
             alpha_t = self.scheduler.alphas_cumprod[t]
