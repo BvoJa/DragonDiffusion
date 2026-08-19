@@ -530,7 +530,14 @@ class Sampler(StableDiffusionPipeline):
             # Compute pred_original_sample (z_0) using DDIM formula with noise_pred
             alpha_prod_t = self.scheduler.alphas_cumprod[t]
             beta_prod_t = 1 - alpha_prod_t
+            
+            # Safety check: ensure alpha_prod_t is not too small to avoid division issues
+            alpha_prod_t = torch.clamp(alpha_prod_t, min=1e-8)
+            
             pred_original_sample = (latent_for_grad - beta_prod_t ** (0.5) * noise_pred.detach()) / alpha_prod_t ** (0.5)
+            
+            # Clamp to reasonable range to avoid extreme values that cause NaN/Inf
+            pred_original_sample = torch.clamp(pred_original_sample, min=-10, max=10)
             
             # Apply Laplacian filter to predicted z_0
             grad_pred = laplacian_filter_tensor_latent(pred_original_sample, self.device)
