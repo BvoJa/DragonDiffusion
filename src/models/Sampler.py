@@ -85,7 +85,7 @@ class Sampler(StableDiffusionPipeline):
                         guidance = self.guidance_appearance(latent=latent, latent_noise_ref=latent_noise_ref[-(i+1)], t=t, text_embeddings=text_embeddings_org, energy_scale=energy_scale, **edit_kwargs)
                     elif mode == 'paste':
                         z_0_ref = latent_noise_ref[0][0:1].squeeze(2) if 'w_grad' in edit_kwargs and edit_kwargs['w_grad'] > 0 else None
-                        guidance = self.guidance_paste(latent=latent, latent_noise_ref=latent_noise_ref[-(i+1)], t=t, text_embeddings=text_embeddings_org, energy_scale=energy_scale, z_0_ref=z_0_ref, **edit_kwargs)
+                        guidance = self.guidance_paste(latent=latent, noise_pred=noise_pred, latent_noise_ref=latent_noise_ref[-(i+1)], t=t, text_embeddings=text_embeddings_org, energy_scale=energy_scale, z_0_ref=z_0_ref, **edit_kwargs)
 
                     noise_pred = noise_pred + guidance
                 else:
@@ -425,7 +425,8 @@ class Sampler(StableDiffusionPipeline):
         self, 
         mask_base_cur, 
         mask_replace_cur, 
-        latent, 
+        latent,
+        noise_pred,
         latent_noise_ref, 
         t, 
         up_ft_index, 
@@ -526,21 +527,16 @@ class Sampler(StableDiffusionPipeline):
             # Detach latent and re-enable gradients for gradient computation
             latent_for_grad = latent.detach().requires_grad_(True)
             
-            # Predict noise using UNet WITHOUT gradients (to avoid attention batch size issues)
-            with torch.no_grad():
-                latent_in = latent.unsqueeze(2)
-                noise_pred = self.unet(latent_in, t, encoder_hidden_states=text_embeddings, mask=dict_mask, save_kv=False, mode='paste')["sample"].squeeze(2)
-            
-            # Compute predicted z_0 using DDIM formula (gradients flow through latent_for_grad only)
-            alpha_t = self.scheduler.alphas_cumprod[t]
-            beta_t = 1 - alpha_t
-            z_0_pred = (latent_for_grad - torch.sqrt(beta_t) * noise_pred.detach()) / torch.sqrt(alpha_t)
+            # Compute pred_original_sample (z_0) using DDIM formula with noise_pred
+            alpha_prod_t = self.scheduler.alphas_cumprod[t]
+            beta_prod_t = 1 - alpha_prod_t
+            pred_original_sample = (latent_for_grad - beta_prod_t ** (0.5) * noise_pred.detach()) / alpha_prod_t ** (0.5)
             
             # Apply Laplacian filter to predicted z_0
-            grad_pred = laplacian_filter_tensor_latent(z_0_pred, self.device)
+            grad_pred = laplacian_filter_tensor_latent(pred_original_sample, self.device)
             
             # Compute loss on foreground only
-            mask_latent = F.interpolate(mask_base_cur.float(), size=(z_0_pred.shape[-2], z_0_pred.shape[-1]), mode='nearest')
+            mask_latent = F.interpolate(mask_base_cur.float(), size=(pred_original_sample.shape[-2], pred_original_sample.shape[-1]), mode='nearest')
             for grad_p, grad_r in zip(grad_pred, grad_ref):
                 # Apply mask to focus on foreground
                 grad_p_masked = grad_p * mask_latent.squeeze(1)
