@@ -221,7 +221,7 @@ def process_appearance(path_mask, path_mask_replace, h, w, scale, input_scale, u
         "w_content":w_content,
     }
 
-def process_paste(path_mask, h, w, dx, dy, scale, input_scale, up_scale, up_ft_index, w_edit, w_content, precision, resize_scale=None, w_grad=0):
+def process_paste(path_mask, h, w, dx, dy, scale, input_scale, up_scale, up_ft_index, w_edit, w_content, precision, resize_scale=None, w_grad=0, w_style=0):
     dx, dy = dx*input_scale, dy*input_scale
     if isinstance(path_mask, str):
         mask_base = cv2.imread(path_mask)
@@ -261,4 +261,5 @@ def process_paste(path_mask, h, w, dx, dy, scale, input_scale, up_scale, up_ft_i
         "w_edit":w_edit,
         "w_content":w_content,
         "w_grad":w_grad,
+        "w_style":w_style,
     }

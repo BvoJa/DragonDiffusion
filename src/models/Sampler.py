@@ -435,17 +435,9 @@ class Sampler(StableDiffusionPipeline):
         w_edit,
         w_content,
         w_grad=0,
+        w_style=0,
     ):
         cos = nn.CosineSimilarity(dim=1)
-
-        # Precompute ground truth gradient from the reference latent (with object placed at destination)
-        if w_grad > 0:
-            with torch.no_grad():
-                ref_latent = latent_noise_ref.squeeze(2)[1::2]  # replace reference with object at correct position
-                gt_gradient = laplacian_filter_tensor_latent(ref_latent, self.device)
-        else:
-            gt_gradient = None
-
         with torch.no_grad():
             up_ft_tar_base = self.estimator(
                         sample=latent_noise_ref.squeeze(2)[::2],
@@ -471,58 +463,53 @@ class Sampler(StableDiffusionPipeline):
                     encoder_hidden_states=text_embeddings)['up_ft']
         for f_id in range(len(up_ft_cur)):
             up_ft_cur[f_id] = F.interpolate(up_ft_cur[f_id], (up_ft_cur[-1].shape[-2]*up_scale, up_ft_cur[-1].shape[-1]*up_scale))
-            
-        # for base content (whole image - all ones mask)
+        # for base content
         loss_con = 0
-        mask_all = torch.ones_like(mask_base_cur, dtype=torch.bool)
         for f_id in range(len(up_ft_tar_base)):
-            up_ft_cur_vec = up_ft_cur[f_id][mask_all.repeat(1,up_ft_cur[f_id].shape[1],1,1)].view(up_ft_cur[f_id].shape[1], -1).permute(1,0)
-            up_ft_tar_vec = up_ft_tar_base[f_id][mask_all.repeat(1,up_ft_tar_base[f_id].shape[1],1,1)].view(up_ft_tar_base[f_id].shape[1], -1).permute(1,0)
+            mask_cur = (1-mask_base_cur.float())>0.5
+            up_ft_cur_vec = up_ft_cur[f_id][mask_cur.repeat(1,up_ft_cur[f_id].shape[1],1,1)].view(up_ft_cur[f_id].shape[1], -1).permute(1,0)
+            up_ft_tar_vec = up_ft_tar_base[f_id][mask_cur.repeat(1,up_ft_tar_base[f_id].shape[1],1,1)].view(up_ft_tar_base[f_id].shape[1], -1).permute(1,0)
             sim = (cos(up_ft_cur_vec, up_ft_tar_vec)+1.)/2.
             loss_con = loss_con + w_content/(1+4*sim.mean())
-
         # for replace content
         loss_edit = 0
         for f_id in range(len(up_ft_tar_replace)):
             mask_cur = mask_base_cur
+
             up_ft_cur_vec = up_ft_cur[f_id][mask_cur.repeat(1,up_ft_cur[f_id].shape[1],1,1)].view(up_ft_cur[f_id].shape[1], -1).permute(1,0)
             up_ft_tar_vec = up_ft_tar_replace[f_id][mask_replace_cur.repeat(1,up_ft_tar_replace[f_id].shape[1],1,1)].view(up_ft_tar_replace[f_id].shape[1], -1).permute(1,0)
             sim_all=((cos(up_ft_cur_vec, up_ft_tar_vec)+1.)/2.)
             loss_edit =  loss_edit + w_edit/(1+4*sim_all.mean())
 
-        # gradient guidance: match Laplacian gradients (same pattern as loss_edit)
-        loss_grad = 0
-        if w_grad > 0:
-            pred_grad = laplacian_filter_tensor_latent(latent, self.device)
-            pred_grad_stack = torch.stack(pred_grad, dim=1).squeeze(0)   # (4, H, W)
-            gt_grad_stack = torch.stack(gt_gradient, dim=1).squeeze(0)   # (4, H, W)
-            # Downsample masks to match latent gradient spatial dimensions
-            mask_base_grad = F.interpolate(mask_base_cur.float(), (pred_grad_stack.shape[-2], pred_grad_stack.shape[-1]))
-            mask_base_grad = (mask_base_grad[0, 0] > 0)  # boolean mask for indexing
-            mask_replace_grad = F.interpolate(mask_replace_cur.float(), (gt_grad_stack.shape[-2], gt_grad_stack.shape[-1]))
-            mask_replace_grad = (mask_replace_grad[0, 0] > 0)  # boolean mask for indexing
-            # same pattern as loss_edit: current latent at source v.s. reference at destination
-            grad_cur_vec = pred_grad_stack[:, mask_base_grad].permute(1, 0)   # (N_src, 4)
-            grad_ref_vec = gt_grad_stack[:, mask_replace_grad].permute(1, 0)  # (N_dst, 4)
-            print(grad_cur_vec.shape, grad_ref_vec.shape)
-            sim = (cos(grad_cur_vec, grad_ref_vec) + 1.) / 2.
-            loss_grad = w_grad / (1 + 4 * sim.mean())
-
         cond_grad_con = torch.autograd.grad(loss_con*energy_scale, latent, retain_graph=True)[0]
         cond_grad_edit = torch.autograd.grad(loss_edit*energy_scale, latent, retain_graph=True)[0]
-        if w_grad > 0:
-            cond_grad_grad = torch.autograd.grad(loss_grad*energy_scale, latent)[0]
+        
+        # Style loss using Gram matrix on foreground
+        loss_style = 0
+        if w_style > 0:
+            for f_id in range(len(up_ft_tar_base)):
+                # Extract foreground features
+                mask_cur = mask_base_cur
+                up_ft_cur_masked = up_ft_cur[f_id] * mask_cur.repeat(1, up_ft_cur[f_id].shape[1], 1, 1)
+                up_ft_tar_masked = up_ft_tar_base[f_id] * mask_cur.repeat(1, up_ft_tar_base[f_id].shape[1], 1, 1)
+                
+                # Compute Gram matrices
+                B, C, H, W = up_ft_cur_masked.shape
+                up_ft_cur_flat = up_ft_cur_masked.view(B, C, H * W)
+                up_ft_tar_flat = up_ft_tar_masked.view(B, C, H * W)
+                gram_cur = torch.bmm(up_ft_cur_flat, up_ft_cur_flat.transpose(1, 2)) / (C * H * W)
+                gram_tar = torch.bmm(up_ft_tar_flat, up_ft_tar_flat.transpose(1, 2)) / (C * H * W)
+                
+                # MSE loss between Gram matrices
+                loss_style = loss_style + F.mse_loss(gram_cur, gram_tar)
+            
+            cond_grad_style = torch.autograd.grad(loss_style*w_style*energy_scale, latent)[0]
         else:
-            cond_grad_grad = 0
+            cond_grad_style = torch.zeros_like(cond_grad_edit)
+        
         mask = F.interpolate(mask_base_cur.float(), (cond_grad_edit[-1].shape[-2], cond_grad_edit[-1].shape[-1]))
         mask = (mask>0).to(dtype=latent.dtype)
-        mask_all = F.interpolate(mask_all.float(), (cond_grad_edit[-1].shape[-2], cond_grad_edit[-1].shape[-1]))
-        mask_all = (mask_all>0).to(dtype=latent.dtype)
-        guidance = cond_grad_con.detach()*mask_all*4e-2 + cond_grad_edit.detach()*mask*4e-2
-        if w_grad > 0:
-            # mask_grad = F.interpolate(mask_replace_cur.float(), (cond_grad_edit[-1].shape[-2], cond_grad_edit[-1].shape[-1]))
-            # mask_grad = (mask_grad>0).to(dtype=latent.dtype)
-            guidance = guidance + cond_grad_grad.detach()*mask*4e-2
+        guidance = cond_grad_con.detach()*(1-mask)*4e-2 + cond_grad_edit.detach()*mask*4e-2 + cond_grad_style.detach()*mask*4e-2
         self.estimator.zero_grad()
 
         return guidance
